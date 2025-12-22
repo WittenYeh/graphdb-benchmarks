@@ -1,16 +1,5 @@
 # Copyright 2025 Weitang Ye
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Apache License, Version 2.0
 
 import docker
 import argparse
@@ -18,36 +7,23 @@ import os
 import sys
 import time
 import socket
+import json
 from contextlib import closing
 
-# Configuration for supported databases
-# Defines image tags, default ports, and environment variables
-DB_CONFIG = {
-    "neo4j": {
-        "image": "neo4j:4.4",
-        "port": 7687,  # Bolt port
-        "env": {"NEO4J_AUTH": "neo4j/password", "NEO4J_dbms_memory_heap_initial__size": "1G"}
-    },
-    "arangodb": {
-        "image": "arangodb:3.8",
-        "port": 8529,
-        "env": {"ARANGO_ROOT_PASSWORD": "password"}
-    },
-    "orientdb": {
-        "image": "orientdb:3.2",
-        "port": 2424, # Binary port
-        "env": {"ORIENTDB_ROOT_PASSWORD": "password"}
-    }
-}
+DEFAULT_CONFIG_FILE = "db_config.json"
 
-# The client image that contains Python, pandas, and DB drivers
-# You need to build this image beforehand (e.g., via a Dockerfile)
-CLIENT_IMAGE = "graph-bench-client:latest"
+def load_db_config(config_path):
+    if not os.path.exists(config_path):
+        print(f"Error: Configuration file '{config_path}' not found.")
+        sys.exit(1)
+    try:
+        with open(config_path, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error: Failed to parse JSON: {e}")
+        sys.exit(1)
 
-def check_port(host, port, retries=30, delay=1):
-    """
-    Checks if a TCP port is open. used to wait for DB readiness.
-    """
+def check_port(host, port, retries=60, delay=1):
     print(f"Waiting for {host}:{port} to be ready...")
     for i in range(retries):
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
@@ -58,75 +34,188 @@ def check_port(host, port, retries=30, delay=1):
         time.sleep(delay)
     return False
 
-def run_benchmark(args):
-    client = docker.from_env()
-    db_name = args.db
-    config = DB_CONFIG.get(db_name)
-
-    if not config:
-        print(f"Error: Database '{db_name}' not defined in DB_CONFIG.")
+def build_image(client, dockerfile_path, tag_name):
+    """
+    Builds a docker image from a specific Dockerfile.
+    """
+    if not os.path.exists(dockerfile_path):
+        print(f"Error: Dockerfile not found at {dockerfile_path}")
         sys.exit(1)
 
-    # Define absolute paths for mounting
-    # 1. Mount current code directory to /app
+    print(f"--- Building Image: {tag_name} from {dockerfile_path} ---")
+    try:
+        img, logs = client.images.build(
+            path=".",
+            dockerfile=dockerfile_path,
+            tag=tag_name,
+            rm=True
+        )
+        return img
+    except docker.errors.BuildError as e:
+        print(f"Build Failed for {tag_name}:")
+        for line in e.build_log:
+            if 'stream' in line:
+                print(line['stream'].strip())
+        sys.exit(1)
+
+def configure_concurrency(db_config, db_name, threads):
+    config = db_config[db_name]
+    env = config.get("env", {}).copy()
+    command = config.get("command", []).copy()
+
+    if db_name == "neo4j":
+        # Neo4j 5.x config format: '.' -> '_' and '_' -> '__'
+        env["NEO4J_server_bolt_thread__pool__max__size"] = str(threads)
+        env["NEO4J_server_bolt_thread__pool__min__size"] = str(threads)
+        env["NEO4J_server_default__listen__address"] = "0.0.0.0"
+
+    elif db_name == "arangodb":
+        command.append(f"--server.maximal-threads={threads}")
+    elif db_name == "orientdb":
+        opts = env.get("JAVA_OPTS", "")
+        opts += f" -Dnetwork.maxConcurrentSessions={threads} -Dserver.network.maxThreads={threads}"
+        env["JAVA_OPTS"] = opts
+
+    return env, command
+
+def load_workload_config(path):
+    if not os.path.exists(path):
+        print(f"Error: Workload config file '{path}' not found.")
+        sys.exit(1)
+    with open(path, 'r') as f:
+        return json.load(f)
+
+def force_remove_container(client, container_name):
+    """
+    Forcefully removes a container by name if it exists.
+    Handles 'removal already in progress' race conditions.
+    """
+    try:
+        container = client.containers.get(container_name)
+        print(f"--- Found leftover container '{container_name}', removing... ---")
+        try:
+            container.stop(timeout=1)
+        except: pass
+
+        container.remove(force=True)
+
+    except docker.errors.NotFound:
+        pass # Good, it's gone
+    except docker.errors.APIError as e:
+        # Ignore "removal already in progress" errors (HTTP 409)
+        if e.response.status_code == 409 or "already in progress" in str(e):
+            print(f"--- Container '{container_name}' is already being removed. Skipping. ---")
+        else:
+            print(f"Warning: Failed to cleanup {container_name}: {e}")
+    except Exception as e:
+        print(f"Warning: General error cleaning {container_name}: {e}")
+
+def cleanup_container(container, name):
+    """Safe cleanup helper for container objects"""
+    if container:
+        print(f"--- Stopping container {name}... ---")
+        try:
+            container.stop()
+        except docker.errors.NotFound:
+            print(f"Container {name} already removed.")
+        except Exception as e:
+            print(f"Error stopping {name}: {e}")
+
+def run_benchmark(args):
+    # Load Configurations
+    db_config = load_db_config(args.db_config)
+    workload_config = load_workload_config(args.workload_config)
+
+    # Extract Server Threads from Workload Config
+    server_threads = workload_config.get("server_config", {}).get("threads", 4)
+    print(f"--- Loaded Workload Config: Using {server_threads} Server Threads ---")
+
+    client = docker.from_env()
+    db_name = args.db
+
+    if db_name not in db_config:
+        print(f"Error: Database '{db_name}' not defined in config.")
+        sys.exit(1)
+
+    # Define Image Tags & Paths
+    server_img_tag = f"bench-server-{db_name}:latest"
+    client_img_tag = f"bench-client-{db_name}:latest"
+    server_dockerfile = f"docker/dockerfile.db.{db_name}"
+    client_dockerfile = f"docker/dockerfile.client.{db_name}"
+
+    # Pre-flight cleanup
+    force_remove_container(client, f"bench-target-{db_name}")
+    force_remove_container(client, f"bench-client-{db_name}")
+
+    # Build
+    build_image(client, server_dockerfile, server_img_tag)
+    build_image(client, client_dockerfile, client_img_tag)
+
+    # Directories
+    host_result_dir = os.path.abspath(args.result_dir)
+    os.makedirs(host_result_dir, exist_ok=True)
     code_mount = os.path.abspath(os.getcwd())
-    # 2. Mount dataset directory to /data
     data_mount = os.path.abspath(args.dataset_dir)
+
+    # Absolute path to workload config to mount it
+    workload_config_host_path = os.path.abspath(args.workload_config)
+
+    # Report Filename
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    report_filename = f"bench_{db_name}_{timestamp}.json"
+    container_report_path = f"/results/{report_filename}"
+
+    # Configure DB Env
+    db_env, db_cmd = configure_concurrency(db_config, db_name, server_threads)
+    base_config = db_config[db_name]
 
     db_container = None
     bench_container = None
 
     try:
-        # ---------------------------------------------------------
-        # Step 1: Start the Database Container
-        # ---------------------------------------------------------
-        print(f"--- [Phase 1] Starting {db_name} container ---")
-        db_container = client.containers.run(
-            config["image"],
-            name=f"bench-target-{db_name}",
-            environment=config["env"],
-            detach=True,
-            remove=True,  # Auto-remove on stop
-            # We map ports to host just for health checking,
-            # the client container will access via localhost internally.
-            ports={f"{config['port']}/tcp": config['port']}
-        )
+        # --- Step 2: Start Database ---
+        print(f"--- [Phase 1] Starting {db_name} Server ---")
+        run_kwargs = {
+            "image": server_img_tag,
+            "name": f"bench-target-{db_name}",
+            "environment": db_env,
+            "detach": True,
+            "remove": True,
+            "ports": {f"{base_config['port']}/tcp": base_config['port']}
+        }
+        if db_cmd:
+            if db_name == "arangodb": run_kwargs["command"] = " ".join(db_cmd)
 
-        # Wait for DB to be responsive
-        # Since we use 'from_env', localhost refers to the host machine here
-        if not check_port("localhost", config["port"]):
-            print("Error: Database failed to start in time.")
-            sys.exit(1)
+        db_container = client.containers.run(**run_kwargs)
 
-        # ---------------------------------------------------------
-        # Step 2: Start the Benchmark Client (Sidecar)
-        # ---------------------------------------------------------
-        print(f"--- [Phase 2] Starting Benchmark Client (Sidecar) ---")
+        if not check_port("localhost", base_config["port"]):
+            raise RuntimeError("Database failed to start within timeout.")
 
-        # Construct the internal command to run inside the client container
-        # We assume there is a 'docker_runner.py' that parses these args and calls BaseGraphDB implementation
-        # Note: --host is explicitly set to 'localhost' because of shared network namespace
+        # --- Step 3: Start Client ---
+        print(f"--- [Phase 2] Starting {db_name} Client ---")
+
+        # Pass the internal path to the workload config
         internal_cmd = [
             "python3", "docker_runner.py",
             "--db", db_name,
             "--host", "localhost",
-            "--port", str(config["port"]),
+            "--port", str(base_config["port"]),
             "--password", "password",
             "--dataset-path", f"/data/{args.dataset_filename}",
-            "--tasks", *args.tasks # Unpack list of tasks
+            "--workload-config", "/app/workload_config.json", # Fixed internal path
+            "--report-file", container_report_path
         ]
 
-        print(f"Executing internal command: {' '.join(internal_cmd)}")
-
         bench_container = client.containers.run(
-            CLIENT_IMAGE,
+            client_img_tag,
             name=f"bench-client-{db_name}",
-            # CRITICAL: Share network stack with the DB container
-            # This enables 'localhost' access with zero latency
             network_mode=f"container:{db_container.id}",
+            environment={"PYTHONUNBUFFERED": "1"},
             volumes={
-                code_mount: {'bind': '/app', 'mode': 'rw'}, # Mount code
-                data_mount: {'bind': '/data', 'mode': 'ro'} # Mount data
+                code_mount: {'bind': '/app', 'mode': 'rw'},
+                data_mount: {'bind': '/data', 'mode': 'ro'},
+                host_result_dir: {'bind': '/results', 'mode': 'rw'},
+                workload_config_host_path: {'bind': '/app/workload_config.json', 'mode': 'ro'}
             },
             working_dir="/app",
             command=internal_cmd,
@@ -134,63 +223,38 @@ def run_benchmark(args):
             remove=True
         )
 
-        # ---------------------------------------------------------
-        # Step 3: Stream Logs and Wait for Completion
-        # ---------------------------------------------------------
-        print("--- [Phase 3] Benchmark Running... Logs output: ---")
-
-        # Stream logs to console
+        # Stream logs
         for line in bench_container.logs(stream=True, follow=True):
             print(line.decode().strip())
 
-        # Wait for container to exit and get status
         result = bench_container.wait()
-        exit_code = result.get('StatusCode', 0)
-
-        if exit_code == 0:
-            print("--- Benchmark Completed Successfully ---")
+        if result.get('StatusCode', 0) == 0:
+            print(f"--- Success. Report: {os.path.join(host_result_dir, report_filename)} ---")
         else:
-            print(f"--- Benchmark Failed with Exit Code {exit_code} ---")
+            print(f"--- Benchmark Failed ---")
+            try: print(db_container.logs(tail=50).decode())
+            except: pass
 
-    except docker.errors.APIError as e:
-        print(f"Docker API Error: {e}")
     except KeyboardInterrupt:
-        print("\nInterrupted by user. Stopping containers...")
-    finally:
-        # ---------------------------------------------------------
-        # Step 4: Cleanup
-        # ---------------------------------------------------------
-        print("--- [Phase 4] Cleaning up containers ---")
-        if bench_container:
-            try:
-                bench_container.stop()
-            except:
-                pass
+        print("\n!!! Interrupted !!!")
+    except Exception as e:
+        print(f"\n!!! Error: {e} !!!")
         if db_container:
-            try:
-                db_container.stop()
-            except:
-                pass
+            try: print(db_container.logs(tail=20).decode())
+            except: pass
+    finally:
+        print("\n--- Cleaning up ---")
+        cleanup_container(bench_container, "Client")
+        cleanup_container(db_container, "Server")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Graph Database Benchmark Orchestrator")
-
-    # Required arguments
-    parser.add_argument("--db", type=str, required=True, choices=["neo4j", "arangodb", "orientdb"],
-                        help="Target database to benchmark")
-    parser.add_argument("--dataset-dir", type=str, required=True,
-                        help="Host directory containing dataset files")
-    parser.add_argument("--dataset-filename", type=str, required=True,
-                        help="Filename of the graph data (e.g., social_network.csv)")
-
-    # Task selection (Multiple choices allowed)
-    parser.add_argument(
-        "--tasks", nargs="+",
-        default=["load_graph", "read_nbrs_bench"],
-        choices=["load_graph", "append_edges_bench", "read_nbrs_bench",
-            "delete_nodes_bench", "delete_edges_bench", "mixed_workload_bench"],
-        help="List of benchmark tasks to execute")
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--db", required=True, choices=["neo4j", "arangodb", "orientdb"])
+    parser.add_argument("--dataset-dir", required=True)
+    parser.add_argument("--dataset-filename", required=True)
+    parser.add_argument("--db-config", default="db_config.json")
+    parser.add_argument("--workload-config", default="workload_config.json",
+                        help="Path to the JSON file defining workload tasks and threads")
+    parser.add_argument("--result-dir", type=str, default="./results")
     args = parser.parse_args()
-
     run_benchmark(args)

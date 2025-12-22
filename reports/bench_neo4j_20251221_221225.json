@@ -1,0 +1,22 @@
+{
+    "metadata": {
+        "database": "neo4j",
+        "dataset": "cit-Patents.mtx",
+        "timestamp": "2025-12-21T14:12:26.361804",
+        "server_threads": "1"
+    },
+    "results": [
+        {
+            "task": "load_graph",
+            "status": "success",
+            "duration_seconds": 1138.436336517334,
+            "error": null
+        },
+        {
+            "task": "read_nbrs_bench",
+            "status": "success",
+            "duration_seconds": 4.440690040588379,
+            "error": null
+        }
+    ]
+}

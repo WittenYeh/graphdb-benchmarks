@@ -1,0 +1,74 @@
+{
+    "metadata": {
+        "database": "neo4j",
+        "dataset": "coAuthorsDBLP.mtx",
+        "timestamp": "2025-12-22T03:58:25.227107",
+        "server_config": {
+            "threads": 8
+        }
+    },
+    "results": [
+        {
+            "task": "load_graph",
+            "config": {
+                "name": "load_graph",
+                "description": "Initial data load"
+            },
+            "status": "success",
+            "metrics": null
+        },
+        {
+            "task": "add_node_latency",
+            "config": {
+                "name": "add_node_latency",
+                "ops": 2000,
+                "description": "Latency test for node addition"
+            },
+            "status": "failed",
+            "metrics": {},
+            "error": "Method not found"
+        },
+        {
+            "task": "read_nbrs_latency",
+            "config": {
+                "name": "read_nbrs_latency",
+                "ops": 2000,
+                "description": "Latency test for neighbor traversal"
+            },
+            "status": "success",
+            "metrics": {
+                "metric_type": "latency",
+                "avg_latency_ms": 4.41374135017395,
+                "p99_latency_ms": 9.090428352355957,
+                "total_ops": 2000
+            }
+        },
+        {
+            "task": "read_nbrs_throughput",
+            "config": {
+                "name": "read_nbrs_throughput",
+                "ops": 1000,
+                "client_threads": 64,
+                "description": "Throughput test for neighbor traversal"
+            },
+            "status": "failed",
+            "metrics": {},
+            "error": "{neo4j_code: Neo.TransientError.Request.NoThreadsAvailable} {message: There are no available threads to serve this request at the moment. You can retry at a later time or consider increasing max thread pool size for bolt connector(s).} {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. There are no available threads to serve this request at the moment. You can retry at a later time or consider increasing max thread pool size for bolt connector(s).}"
+        },
+        {
+            "task": "mixed_workload_throughput",
+            "config": {
+                "name": "mixed_workload_throughput",
+                "ops": 10000,
+                "client_threads": 64,
+                "ratios": {
+                    "read_nbrs": 0.5,
+                    "add_edges": 0.5
+                }
+            },
+            "status": "failed",
+            "metrics": {},
+            "error": "{neo4j_code: Neo.TransientError.Request.NoThreadsAvailable} {message: There are no available threads to serve this request at the moment. You can retry at a later time or consider increasing max thread pool size for bolt connector(s).} {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. There are no available threads to serve this request at the moment. You can retry at a later time or consider increasing max thread pool size for bolt connector(s).}"
+        }
+    ]
+}

@@ -1,0 +1,25 @@
+{
+  "neo4j": {
+    "image": "ignored_local_build",
+    "port": 7687,
+    "env": {
+        "NEO4J_AUTH": "neo4j/password",
+        "NEO4J_server_memory_heap_initial__size": "1G",
+        "NEO4J_server_memory_heap_max__size": "1G",
+        "NEO4J_server_default__listen__address": "0.0.0.0"
+    },
+    "command": []
+  },
+  "arangodb": {
+    "image": "ignored_local_build",
+    "port": 8529,
+    "env": { "ARANGO_ROOT_PASSWORD": "password" },
+    "command": ["arangod"]
+  },
+  "orientdb": {
+    "image": "ignored_local_build",
+    "port": 2424,
+    "env": { "ORIENTDB_ROOT_PASSWORD": "password" },
+    "command": ["/orientdb/bin/server.sh"]
+  }
+}

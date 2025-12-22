@@ -1,118 +1,212 @@
 # Copyright 2025 Weitang Ye
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Apache License, Version 2.0
 
 import argparse
 import sys
 import importlib
 import time
+import json
+import datetime
 import os
+import random
+import traceback
+
+def get_sample_ids(filepath, count=5000):
+    ids = set()
+    try:
+        with open(filepath, 'r') as f:
+            for line in f:
+                if line.startswith('%') or line.startswith('#'): continue
+                parts = line.strip().replace(',', ' ').split()
+                if len(parts) >= 2:
+                    ids.add(parts[0])
+                    ids.add(parts[1])
+                if len(ids) >= count: break
+    except: return ["0", "1"]
+    return list(ids)
+
+def generate_workload(task_name, ids, num_ops, ratios=None):
+    """
+    Generates workload based on task name.
+    Supports mixed workloads with configurable ratios.
+    """
+    workload = []
+    if not ids: ids = ["0"]
+
+    # Map config keys to internal OP types
+    # user_config_key -> internal_op_type
+    KEY_MAP = {
+        "read_nbrs": "READ_NBRS",
+        "add_nodes": "ADD_NODE",
+        "delete_nodes": "DEL_NODE",
+        "add_edges": "ADD_EDGE",
+        "delete_edges": "DEL_EDGE"
+    }
+
+    # Determine operation list
+    ops_to_generate = []
+
+    if "mixed" in task_name and ratios:
+        # Weighted random generation
+        # ratios example: {"read_nbrs": 0.8, "add_edges": 0.2}
+        population = []
+        weights = []
+        for key, weight in ratios.items():
+            if key in KEY_MAP:
+                population.append(KEY_MAP[key])
+                weights.append(weight)
+
+        if not population:
+            # Fallback if config is empty
+            ops_to_generate = ["READ_NBRS"] * num_ops
+        else:
+            # Generate all op types at once based on weights
+            ops_to_generate = random.choices(population, weights=weights, k=num_ops)
+
+    else:
+        # Single task generation
+        op_type = "READ_NBRS" # Default
+        if "read_nbrs" in task_name: op_type = "READ_NBRS"
+        elif "add_nodes" in task_name: op_type = "ADD_NODE"
+        elif "delete_nodes" in task_name: op_type = "DEL_NODE"
+        elif "add_edges" in task_name: op_type = "ADD_EDGE"
+        elif "delete_edges" in task_name: op_type = "DEL_EDGE"
+
+        ops_to_generate = [op_type] * num_ops
+
+    # Create parameter objects for each op
+    for op_type in ops_to_generate:
+        params = {}
+
+        # 1. READ / DELETE NODE: Need existing ID
+        if op_type in ["READ_NBRS", "DEL_NODE"]:
+            params = {"id": random.choice(ids)}
+
+        # 2. ADD NODE: Need new unique ID
+        elif op_type == "ADD_NODE":
+            # Generate a distinct-looking ID to avoid collision with existing dataset
+            params = {"id": f"new_{random.randint(1000000, 99999999)}"}
+
+        # 3. EDGES: Need src and dst
+        elif op_type in ["ADD_EDGE", "DEL_EDGE"]:
+            params = {
+                "src": random.choice(ids),
+                "dst": random.choice(ids)
+            }
+
+        workload.append({"type": op_type, "params": params})
+
+    return workload
 
 def main():
-    """
-    Main entry point for the internal benchmark runner.
-
-    This script is intended to be executed inside the Docker container.
-    It performs the following steps:
-    1. Parses arguments passed from the host orchestrator (run.py).
-    2. Dynamically loads the specific database implementation wrapper from the 'impl' package.
-    3. Connects to the database (via localhost, thanks to network_mode="container:id").
-    4. Executes the requested benchmark tasks sequentially.
-    """
-
-    # 1. Parse Command Line Arguments
-    parser = argparse.ArgumentParser(description="Internal Benchmark Executor")
-
-    parser.add_argument("--db", type=str, required=True,
-                        help="Name of the database (e.g., neo4j, arangodb). Used to load the module.")
-    parser.add_argument("--host", type=str, required=True,
-                        help="Hostname or IP to connect to (usually 'localhost' in sidecar mode).")
-    parser.add_argument("--port", type=int, required=True,
-                        help="Port number for the database connection.")
-    parser.add_argument("--password", type=str, default="",
-                        help="Password for database authentication.")
-    parser.add_argument("--dataset-path", type=str, required=True,
-                        help="Absolute path to the dataset file inside the container.")
-    parser.add_argument("--tasks", nargs="+", required=True,
-                        help="List of benchmark methods to execute (e.g., load_graph read_nbrs_bench).")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--db", required=True)
+    parser.add_argument("--host", required=True)
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--password", default="")
+    parser.add_argument("--dataset-path", required=True)
+    parser.add_argument("--workload-config", required=True)
+    parser.add_argument("--report-file", required=False)
 
     args = parser.parse_args()
 
-    # 2. Dynamic Module Loading
-    # We expect the wrapper to be located in: impl/{db_name}_impl.py
-    # We expect the class name to be: {Db_name_capitalized}DB (e.g., Neo4jDB)
+    # Load Config
+    with open(args.workload_config, 'r') as f:
+        workload_config = json.load(f)
+
+    # Init Report
+    report = {
+        "metadata": {
+            "database": args.db,
+            "dataset": os.path.basename(args.dataset_path),
+            "timestamp": datetime.datetime.now().isoformat(),
+            "server_config": workload_config.get("server_config", {})
+        },
+        "results": []
+    }
+
+    # Load Module
     module_name = f"impl.{args.db}_impl"
     class_name = f"{args.db.capitalize()}DB"
-
-    print(f"[DockerRunner] Loading module: {module_name}, Class: {class_name}")
-
     try:
-        # Import the module dynamically
         module = importlib.import_module(module_name)
-        # Get the class reference
         DBClass = getattr(module, class_name)
-    except ImportError as e:
-        print(f"[DockerRunner] Error: Could not import module '{module_name}'. "
-              f"Ensure the file 'impl/{args.db}_impl.py' exists.")
-        print(f"[DockerRunner] Detail: {e}")
-        sys.exit(1)
-    except AttributeError:
-        print(f"[DockerRunner] Error: Class '{class_name}' not found in '{module_name}'.")
-        sys.exit(1)
-
-    # 3. Instantiate and Connect
-    try:
-        print(f"[DockerRunner] Connecting to {args.db} at {args.host}:{args.port}...")
-        # Initialize the wrapper
-        db = DBClass(host=args.host, port=args.port, password=args.password)
-        # Establish connection
-        db.connect()
-        print(f"[DockerRunner] Successfully connected to {args.db}.")
     except Exception as e:
-        print(f"[DockerRunner] connection failed: {e}")
+        print(f"Error loading module: {e}")
         sys.exit(1)
 
-    # 4. Execute Benchmark Tasks
-    # We treat the dataset path as the 'workload' object for simplicity here.
-    # In a more complex scenario, you might parse the CSV into a specific Workload object.
-    workload = args.dataset_path
-
-    for task_name in args.tasks:
-        print(f"\n>>> [Task Start] Executing: {task_name}")
-
-        # Check if the method exists in the wrapper class
-        method = getattr(db, task_name, None)
-
-        if method and callable(method):
-            start_time = time.time()
+    # Connect
+    print(f"[DockerRunner] Connecting to {args.db}...")
+    db = DBClass(host=args.host, port=args.port, password=args.password)
+    try:
+        for i in range(60):
             try:
-                # Execute the method defined in BaseGraphDB interface
-                method(workload)
-                elapsed = time.time() - start_time
-                print(f"<<< [Task End] {task_name} completed in {elapsed:.4f} seconds.")
-            except Exception as e:
-                print(f"<<< [Task Failed] {task_name} failed with error: {e}")
-        else:
-            print(f"[DockerRunner] Warning: Method '{task_name}' is not implemented in {class_name}.")
-
-    # 5. Cleanup
-    try:
-        print("\n[DockerRunner] Closing connection...")
-        db.close()
+                db.connect()
+                break
+            except: time.sleep(1)
+        else: raise Exception("Connection timeout")
     except Exception as e:
-        print(f"[DockerRunner] Error closing connection: {e}")
+        print(f"Init failed: {e}")
+        sys.exit(1)
 
-    print("[DockerRunner] All operations finished.")
+    cached_ids = None
+
+    for task in workload_config.get("tasks", []):
+        task_name = task["name"]
+        print(f"\n>>> [Task Start] {task_name}")
+
+        method = getattr(db, task_name, None)
+        task_result = {
+            "task": task_name,
+            "config": task,
+            "status": "failed",
+            "metrics": {}
+        }
+
+        if method:
+            try:
+                task_input = None
+                if task_name == "load_graph":
+                    task_input = args.dataset_path
+                else:
+                    if not cached_ids:
+                        print("[DockerRunner] Sampling IDs...")
+                        cached_ids = get_sample_ids(args.dataset_path)
+
+                    num_ops = task.get("ops", 1000)
+                    ratios = task.get("ratios", None)
+                    print(f"[DockerRunner] Generating {num_ops} ops...")
+                    task_input = generate_workload(task_name, cached_ids, num_ops, ratios)
+
+                    if "_throughput" in task_name:
+                        client_threads = task.get("client_threads", 4)
+                        db.current_client_threads = client_threads
+
+                metrics = method(task_input)
+
+                if isinstance(metrics, float):
+                    metrics = {"duration_s": metrics}
+
+                task_result["status"] = "success"
+                task_result["metrics"] = metrics
+                print(f"<<< [Task End] {task_name} Success.")
+
+            except Exception as e:
+                print(f"<<< [Task Failed] {e}")
+                task_result["error"] = str(e)
+                traceback.print_exc()
+        else:
+            task_result["error"] = "Method not found"
+
+        report["results"].append(task_result)
+
+    try: db.close()
+    except: pass
+
+    if args.report_file:
+        with open(args.report_file, 'w') as f:
+            json.dump(report, f, indent=4)
+        print("[DockerRunner] Report saved.")
 
 if __name__ == "__main__":
     main()

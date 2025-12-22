@@ -1,18 +1,9 @@
 # Copyright 2025 Weitang Ye
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Apache License, Version 2.0
 
 from abc import ABC, abstractmethod
+import os
+import sys
 
 class BaseGraphDB(ABC):
 
@@ -20,70 +11,85 @@ class BaseGraphDB(ABC):
         self.host = host
         self.port = port
         self.password = password
+        self.total_lines = 0
+
+    def preprocess_dataset(self, original_path: str) -> str:
+        """
+        Reads the raw dataset, strips comments, standardizes delimiter to space.
+        """
+        clean_path = "/tmp/clean_graph.csv"
+        print(f"[Pre-process] Cleaning dataset: {original_path} -> {clean_path}")
+
+        line_count = 0
+        with open(original_path, 'r') as f_in, open(clean_path, 'w') as f_out:
+            for line in f_in:
+                if line.startswith('%') or line.startswith('#'):
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    f_out.write(f"{parts[0]} {parts[1]}\n")
+                    line_count += 1
+
+        print(f"[Pre-process] Done. Total edges to load: {line_count}")
+        self.total_lines = line_count
+        return clean_path
+
+    def print_progress(self, current, total, label="Loading"):
+        """
+        Prints progress every 5% or at least every 10k items to avoid log spam
+        but ensure visibility in Docker.
+        """
+        if total == 0: return
+
+        # Print roughly every 5% or every 100k records, whichever is smaller
+        interval = min(total // 20, 100000)
+
+        if current % interval == 0 or current == total:
+            percent = (current / total) * 100
+            print(f"[{label}] Progress: {current}/{total} ({percent:.1f}%)")
+            sys.stdout.flush()
 
     @abstractmethod
-    def connect(self):
-        pass
+    def connect(self): pass
 
     @abstractmethod
-    def close(self):
-        pass
+    def close(self): pass
 
     @abstractmethod
-    def load_graph(self, graph_file: str):
-        '''r
-        Load graph data into the database from the specified file.
-        The file is expected to be in CSV format with edges defined as:
-        source_node_id,target_node_id
-        graph_file: str - path to the CSV file containing graph edges
-        Returns: None
-        '''
-        pass
+    def load_graph(self, graph_file: str): pass
 
     @abstractmethod
-    def read_nbrs_bench(self, workload):
-        '''r
-        Perform neighbor reading benchmark based on the provided workload.
-        workload: json-lik structure defining the read operations
-        '''
-        pass
+    def read_nbrs_latency(self, workload): pass
 
     @abstractmethod
-    def add_nodes_bench(self, workload):
-        '''r
-        Perform node addition benchmark based on the provided workload.
-        workload: json-like structure defining the add operations
-        '''
-        pass
+    def add_nodes_latency(self, workload): pass
 
     @abstractmethod
-    def delete_nodes_bench(self, workload):
-        '''r
-        Perform node deletion benchmark based on the provided workload.
-        workload: json-like structure defining the delete operations
-        '''
-        pass
+    def delete_nodes_latency(self, workload): pass
 
     @abstractmethod
-    def add_edges_bench(self, workload):
-        '''r
-        Perform edge addition benchmark based on the provided workload.
-        workload: json-like structure defining the add operations
-        '''
-        pass
+    def add_edges_latency(self, workload): pass
 
     @abstractmethod
-    def delete_edges_bench(self, workload):
-        '''r
-        Perform edge deletion benchmark based on the provided workload.
-        workload: json-like structure defining the delete operations
-        '''
-        pass
+    def delete_edges_latency(self, workload): pass
 
     @abstractmethod
-    def mixed_workload_bench(self, workload):
-        '''r
-        Perform mixed workload benchmark based on the provided workload.
-        workload: json-like structure defining the mixed operations
-        '''
-        pass
+    def mixed_workload_latency(self, workload): pass
+
+    @abstractmethod
+    def read_nbrs_throughput(self, workload): pass
+
+    @abstractmethod
+    def add_nodes_throughput(self, workload): pass
+
+    @abstractmethod
+    def delete_nodes_throughput(self, workload): pass
+
+    @abstractmethod
+    def add_edges_throughput(self, workload): pass
+
+    @abstractmethod
+    def delete_edges_throughput(self, workload): pass
+
+    @abstractmethod
+    def mixed_workload_throughput(self, workload): pass

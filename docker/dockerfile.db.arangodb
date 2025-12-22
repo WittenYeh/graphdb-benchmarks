@@ -1,0 +1,8 @@
+FROM arangodb:3.11
+
+ENV ARANGO_ROOT_PASSWORD=password
+
+EXPOSE 8529
+
+# ArangoDB entrypoint usually handles arguments passed to CMD
+CMD ["arangod"]

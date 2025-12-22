@@ -1,0 +1,86 @@
+{
+    "metadata": {
+        "database": "neo4j",
+        "dataset": "coAuthorsDBLP.mtx",
+        "timestamp": "2025-12-22T04:34:08.632961",
+        "server_config": {
+            "threads": 8
+        }
+    },
+    "results": [
+        {
+            "task": "load_graph",
+            "config": {
+                "name": "load_graph",
+                "description": "Initial data load"
+            },
+            "status": "success",
+            "metrics": null
+        },
+        {
+            "task": "add_nodes_latency",
+            "config": {
+                "name": "add_nodes_latency",
+                "ops": 2000,
+                "description": "Latency test for node addition"
+            },
+            "status": "success",
+            "metrics": {
+                "metric_type": "latency",
+                "avg_latency_ms": 3.97271728515625,
+                "p99_latency_ms": 5.414793491363525,
+                "total_ops": 2000
+            }
+        },
+        {
+            "task": "read_nbrs_latency",
+            "config": {
+                "name": "read_nbrs_latency",
+                "ops": 2000,
+                "description": "Latency test for neighbor traversal"
+            },
+            "status": "success",
+            "metrics": {
+                "metric_type": "latency",
+                "avg_latency_ms": 3.782309889793396,
+                "p99_latency_ms": 6.957557201385498,
+                "total_ops": 2000
+            }
+        },
+        {
+            "task": "read_nbrs_throughput",
+            "config": {
+                "name": "read_nbrs_throughput",
+                "ops": 10000,
+                "client_threads": 8,
+                "description": "Throughput test for neighbor traversal"
+            },
+            "status": "success",
+            "metrics": {
+                "metric_type": "throughput",
+                "ops_per_sec": 326.0419043397401,
+                "duration_s": 30.6709041595459,
+                "total_ops": 10000
+            }
+        },
+        {
+            "task": "mixed_workload_throughput",
+            "config": {
+                "name": "mixed_workload_throughput",
+                "ops": 10000,
+                "client_threads": 8,
+                "ratios": {
+                    "read_nbrs": 0.5,
+                    "add_edges": 0.5
+                }
+            },
+            "status": "success",
+            "metrics": {
+                "metric_type": "throughput",
+                "ops_per_sec": 412.0797664547544,
+                "duration_s": 24.267146348953247,
+                "total_ops": 10000
+            }
+        }
+    ]
+}

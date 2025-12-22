@@ -1,0 +1,32 @@
+# Copyright 2025 Weitang Ye
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Must use Python 3.9 for legacy pyorient support
+FROM python:3.9-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pyorient
+RUN git clone https://github.com/mogui/pyorient.git /tmp/pyorient \
+    && cd /tmp/pyorient \
+    && pip install .
+
+RUN pip install --no-cache-dir pandas numpy
+
+CMD ["tail", "-f", "/dev/null"]

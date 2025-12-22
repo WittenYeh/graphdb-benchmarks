@@ -1,177 +1,175 @@
 # Copyright 2025 Weitang Ye
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Apache License, Version 2.0
 
 from neo4j import GraphDatabase
 import time
-import csv
-import os
-# Assuming BaseGraphDB is in impl/base.py or passed via standard import
+import statistics
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Dict, Any, Tuple
 from .base import BaseGraphDB
 
 class Neo4jDB(BaseGraphDB):
-    """
-    Neo4j implementation of the Graph Database Benchmark interface.
-    Uses the official neo4j python driver.
-    """
-
-    def connect(self):
-        """Establishes connection to the Neo4j database."""
+    def connect(self) -> None:
         uri = f"bolt://{self.host}:{self.port}"
-        # Setting max_connection_lifetime to verify connections in long benchmarks
-        self.driver = GraphDatabase.driver(uri, auth=("neo4j", self.password))
+        # Configure pool size to support high concurrency in throughput tests
+        self.driver = GraphDatabase.driver(
+            uri,
+            auth=("neo4j", self.password),
+            max_connection_lifetime=3600,
+            max_connection_pool_size=200
+        )
+        self.driver.verify_connectivity()
 
-        # Verify connectivity
-        try:
-            self.driver.verify_connectivity()
-        except Exception as e:
-            raise ConnectionError(f"Failed to connect to Neo4j at {uri}: {e}")
-
-    def close(self):
-        """Closes the driver connection."""
+    def close(self) -> None:
         if hasattr(self, 'driver'):
             self.driver.close()
 
-    def load_graph(self, graph_file: str):
-        """
-        Loads graph data from a CSV file using batch insertion via the driver.
-        Note: We use driver-side batching instead of LOAD CSV to handle
-        file path access issues in containerized environments (Client vs Server).
-        """
-        batch_size = 1000
-        query = """
-        UNWIND $rows AS row
-        MERGE (s:Node {id: row.source_id})
-        MERGE (t:Node {id: row.target_id})
-        MERGE (s)-[:REL]->(t)
-        """
+    def load_graph(self, graph_file: str) -> None:
+        # 1. Stream Pre-process (Remove comments, standardize delimiters)
+        clean_file = self.preprocess_dataset(graph_file)
 
-        batch = []
-        print(f"[Neo4j] Loading graph from {graph_file}...")
+        # Batch size for Bolt Protocol
+        BATCH_SIZE = 5000
 
+        print("[Neo4j] Creating Unique Index for Nodes...")
         with self.driver.session() as session:
-            with open(graph_file, 'r') as f:
-                reader = csv.reader(f)
-                # Skip header if exists, assuming header: source_id, target_id
-                # If no header, remove next line or handle logic accordingly
-                # headers = next(reader, None)
+            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (n:Node) REQUIRE n.id IS UNIQUE")
+            # Allow index to propagate
+            time.sleep(1.0)
 
-                for row in reader:
-                    if len(row) < 2: continue
-                    batch.append({'source_id': row[0], 'target_id': row[1]})
-
-                    if len(batch) >= batch_size:
-                        session.run(query, rows=batch)
-                        batch = []
-
-                # Insert remaining
-                if batch:
-                    session.run(query, rows=batch)
-
-        print("[Neo4j] Load complete.")
-
-    def _compile_workload(self, workload):
-        """
-        Internal Helper: Converts the abstract JSON workload into Neo4j-specific
-        Cypher queries and parameters.
-
-        This step is performed BEFORE the timer starts to ensure we measure
-        DB execution time, not Python string manipulation time.
-
-        Returns: list of tuples [(query, params), ...]
-        """
-        compiled_ops = []
-
-        for op in workload:
-            op_type = op['type']
-            params = op['params']
-
-            if op_type == "READ_NBRS":
-                query = "MATCH (n:Node {id: $id})-[:REL]-(m) RETURN m.id"
-                p = {"id": params['id']}
-
-            elif op_type == "ADD_NODE":
-                query = "CREATE (n:Node {id: $id})"
-                p = {"id": params['id']}
-
-            elif op_type == "DEL_NODE":
-                # Detach delete removes the node and its incident edges
-                query = "MATCH (n:Node {id: $id}) DETACH DELETE n"
-                p = {"id": params['id']}
-
-            elif op_type == "ADD_EDGE":
-                query = """
-                MATCH (s:Node {id: $src}), (t:Node {id: $dst})
-                MERGE (s)-[:REL]->(t)
-                """
-                p = {"src": params['src'], "dst": params['dst']}
-
-            elif op_type == "DEL_EDGE":
-                query = """
-                MATCH (s:Node {id: $src})-[r:REL]->(t:Node {id: $dst})
-                DELETE r
-                """
-                p = {"src": params['src'], "dst": params['dst']}
-
-            else:
-                continue # Skip unknown operations
-
-            compiled_ops.append((query, p))
-
-        return compiled_ops
-
-    def _execute_benchmark(self, workload, label):
-        """
-        Core execution logic:
-        1. Compile workload (Not timed).
-        2. Execute queries (Timed).
-        """
-        # 1. Preparation Phase (Excluded from benchmark time)
-        print(f"[Neo4j] Compiling {len(workload)} operations for {label}...")
-        prepared_queries = self._compile_workload(workload)
-
-        # 2. Execution Phase (Timed)
-        print(f"[Neo4j] Starting execution for {label}...")
+        print(f"[Neo4j] Bulk loading from {clean_file}...")
         start_time = time.time()
 
-        with self.driver.session() as session:
-            for query, params in prepared_queries:
-                # Using session.run for raw throughput measurement
-                # We consume() the result to ensure the query actually finished on server
-                session.run(query, params).consume()
+        local_nodes = set()
+        edges_batch = []
+        count = 0
 
-        end_time = time.time()
-        duration = end_time - start_time
+        # Use a single session for loading to minimize overhead
+        with self.driver.session() as session:
+            with open(clean_file, 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    src, dst = parts[0], parts[1]
+
+                    # Deduplicate nodes within this batch locally
+                    local_nodes.add(src)
+                    local_nodes.add(dst)
+
+                    # Edges are assumed unique globally (per user config), use direct list
+                    edges_batch.append({"src": src, "dst": dst})
+                    count += 1
+
+                    if len(edges_batch) >= BATCH_SIZE:
+                        # 1. Upsert Nodes (MERGE is safe and fast with Index)
+                        node_list = [{"id": nid} for nid in local_nodes]
+                        session.run("UNWIND $batch AS row MERGE (:Node {id: row.id})", batch=node_list).consume()
+
+                        # 2. Insert Edges (CREATE is fastest, assumes no dupes in dataset)
+                        session.run("""
+                            UNWIND $batch AS row
+                            MATCH (s:Node {id: row.src}), (t:Node {id: row.dst})
+                            CREATE (s)-[:REL]->(t)
+                        """, batch=edges_batch).consume()
+
+                        local_nodes.clear()
+                        edges_batch = []
+                        self.print_progress(count, self.total_lines, "Neo4j")
+
+                # Final Flush
+                if local_nodes:
+                    node_list = [{"id": nid} for nid in local_nodes]
+                    session.run("UNWIND $batch AS row MERGE (:Node {id: row.id})", batch=node_list).consume()
+                if edges_batch:
+                    session.run("""
+                        UNWIND $batch AS row
+                        MATCH (s:Node {id: row.src}), (t:Node {id: row.dst})
+                        CREATE (s)-[:REL]->(t)
+                    """, batch=edges_batch).consume()
+
+                self.print_progress(count, self.total_lines, "Neo4j")
+
+        print(f"\n[Neo4j] Load complete in {time.time() - start_time:.2f}s.")
+
+    def _compile_workload(self, workload: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
+        """Pre-compiles workload to Cypher queries."""
+        compiled_ops = []
+        for op in workload:
+            t, p = op['type'], op['params']
+            if t == "READ_NBRS":
+                compiled_ops.append(("MATCH (n:Node {id: $id})-[:REL]->(m) RETURN m.id", {"id": p['id']}))
+            elif t == "ADD_NODE":
+                compiled_ops.append(("CREATE (n:Node {id: $id})", {"id": p['id']}))
+            elif t == "DEL_NODE":
+                compiled_ops.append(("MATCH (n:Node {id: $id}) DETACH DELETE n", {"id": p['id']}))
+            elif t == "ADD_EDGE":
+                # MERGE used in benchmarks to be safe against running same workload twice,
+                # but CREATE is also fine if workload is distinct. Using MERGE for consistency.
+                compiled_ops.append(("MATCH (s:Node {id: $src}), (t:Node {id: $dst}) MERGE (s)-[:REL]->(t)", {"src": p['src'], "dst": p['dst']}))
+            elif t == "DEL_EDGE":
+                compiled_ops.append(("MATCH (s:Node {id: $src})-[r:REL]->(t:Node {id: $dst}) DELETE r", {"src": p['src'], "dst": p['dst']}))
+        return compiled_ops
+
+    def _execute_latency(self, workload: List[Dict[str, Any]], label: str) -> Dict[str, Any]:
+        print(f"[Neo4j] Compiling {len(workload)} ops for {label} (Latency)...")
+        prepared = self._compile_workload(workload)
+
+        print(f"[Neo4j] Executing {label} sequentially...")
+        latencies = []
+
+        with self.driver.session() as session:
+            for q, p in prepared:
+                start = time.time()
+                session.run(q, p).consume()
+                latencies.append(time.time() - start)
+
+        avg_lat = statistics.mean(latencies)
+        p99_lat = statistics.quantiles(latencies, n=100)[98] if len(latencies) >= 100 else 0
+
+        print(f"[Result] {label}: Avg: {avg_lat*1000:.2f}ms, P99: {p99_lat*1000:.2f}ms")
+        return {
+            "metric_type": "latency",
+            "avg_latency_ms": avg_lat * 1000,
+            "p99_latency_ms": p99_lat * 1000,
+            "total_ops": len(workload)
+        }
+
+    def _execute_throughput(self, workload: List[Dict[str, Any]], label: str) -> Dict[str, Any]:
+        client_threads = getattr(self, 'current_client_threads', 8)
+        print(f"[Neo4j] Compiling {len(workload)} ops for {label} (Throughput, {client_threads} threads)...")
+        prepared = self._compile_workload(workload)
+
+        print(f"[Neo4j] Executing {label} concurrently...")
+        start_time = time.time()
+
+        def run_op(op_tuple):
+            with self.driver.session() as session:
+                session.run(op_tuple[0], op_tuple[1]).consume()
+
+        with ThreadPoolExecutor(max_workers=client_threads) as executor:
+            list(executor.map(run_op, prepared))
+
+        duration = time.time() - start_time
         ops_per_sec = len(workload) / duration if duration > 0 else 0
 
-        print(f"[Benchmark Result] {label}: {len(workload)} ops in {duration:.4f}s ({ops_per_sec:.2f} ops/s)")
-        return duration
+        print(f"[Result] {label}: {ops_per_sec:.2f} ops/s")
+        return {
+            "metric_type": "throughput",
+            "ops_per_sec": ops_per_sec,
+            "duration_s": duration,
+            "total_ops": len(workload)
+        }
 
-    def read_nbrs_bench(self, workload):
-        """Performs k-hop neighbor query (k=1 implicit in simple wrapper) or simple neighbor scan."""
-        return self._execute_benchmark(workload, "READ_NBRS")
+    # Interface Mapping
+    def read_nbrs_latency(self, w): return self._execute_latency(w, "READ_NBRS")
+    def add_nodes_latency(self, w): return self._execute_latency(w, "ADD_NODE")
+    def delete_nodes_latency(self, w): return self._execute_latency(w, "DEL_NODE")
+    def add_edges_latency(self, w): return self._execute_latency(w, "ADD_EDGE")
+    def delete_edges_latency(self, w): return self._execute_latency(w, "DEL_EDGE")
+    def mixed_workload_latency(self, w): return self._execute_latency(w, "MIXED")
 
-    def add_nodes_bench(self, workload):
-        return self._execute_benchmark(workload, "ADD_NODE")
-
-    def delete_nodes_bench(self, workload):
-        return self._execute_benchmark(workload, "DEL_NODE")
-
-    def add_edges_bench(self, workload):
-        return self._execute_benchmark(workload, "ADD_EDGE")
-
-    def delete_edges_bench(self, workload):
-        return self._execute_benchmark(workload, "DEL_EDGE")
-
-    def mixed_workload_bench(self, workload):
-        return self._execute_benchmark(workload, "MIXED_WORKLOAD")
+    def read_nbrs_throughput(self, w): return self._execute_throughput(w, "READ_NBRS")
+    def add_nodes_throughput(self, w): return self._execute_throughput(w, "ADD_NODE")
+    def delete_nodes_throughput(self, w): return self._execute_throughput(w, "DEL_NODE")
+    def add_edges_throughput(self, w): return self._execute_throughput(w, "ADD_EDGE")
+    def delete_edges_throughput(self, w): return self._execute_throughput(w, "DEL_EDGE")
+    def mixed_workload_throughput(self, w): return self._execute_throughput(w, "MIXED")

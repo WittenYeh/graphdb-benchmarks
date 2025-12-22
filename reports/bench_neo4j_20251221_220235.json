@@ -1,0 +1,22 @@
+{
+    "metadata": {
+        "database": "neo4j",
+        "dataset": "cit-Patents.mtx",
+        "timestamp": "2025-12-21T14:02:36.508459",
+        "server_threads": "1"
+    },
+    "results": [
+        {
+            "task": "load_graph",
+            "status": "failed",
+            "duration_seconds": 0,
+            "error": "{neo4j_code: Neo.TransientError.General.DatabaseUnavailable} {message: The database is not currently available to serve your request, refer to the database logs for more details. Retrying your request at a later time may succeed.} {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. The database is not currently available to serve your request, refer to the database logs for more details. Retrying your request at a later time may succeed.}"
+        },
+        {
+            "task": "read_nbrs_bench",
+            "status": "failed",
+            "duration_seconds": 0,
+            "error": "Couldn't connect to localhost:7687 (resolved to ('[::1]:7687', '127.0.0.1:7687')):\nFailed to establish connection to ResolvedIPv6Address(('::1', 7687, 0, 0)) (reason [Errno 111] Connection refused)\nFailed to establish connection to ResolvedIPv4Address(('127.0.0.1', 7687)) (reason [Errno 111] Connection refused)"
+        }
+    ]
+}

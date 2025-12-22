@@ -1,0 +1,22 @@
+{
+    "metadata": {
+        "database": "arangodb",
+        "dataset": "cit-Patents.mtx",
+        "timestamp": "2025-12-22T01:05:46.513272",
+        "server_threads": "1"
+    },
+    "results": [
+        {
+            "task": "load_graph",
+            "status": "success",
+            "duration_seconds": 724.3482093811035,
+            "error": null
+        },
+        {
+            "task": "read_nbrs_bench",
+            "status": "success",
+            "duration_seconds": 5.183598518371582,
+            "error": null
+        }
+    ]
+}

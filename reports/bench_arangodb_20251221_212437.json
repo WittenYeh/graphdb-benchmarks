@@ -1,0 +1,22 @@
+{
+    "metadata": {
+        "database": "arangodb",
+        "dataset": "cit-Patents.mtx",
+        "timestamp": "2025-12-21T13:24:38.348986",
+        "server_threads": "1"
+    },
+    "results": [
+        {
+            "task": "load_graph",
+            "status": "failed",
+            "duration_seconds": 0,
+            "error": "[HTTP 400][ERR 1221] illegal document key"
+        },
+        {
+            "task": "read_nbrs_bench",
+            "status": "success",
+            "duration_seconds": 2.566371440887451,
+            "error": null
+        }
+    ]
+}

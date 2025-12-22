@@ -1,0 +1,3 @@
+[submodule "graph-dataset"]
+	path = graph-dataset
+	url = https://github.com/WittenYeh/GraphDatasets.git

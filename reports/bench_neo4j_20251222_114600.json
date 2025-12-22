@@ -1,0 +1,71 @@
+{
+    "metadata": {
+        "database": "neo4j",
+        "dataset": "coAuthorsDBLP.mtx",
+        "timestamp": "2025-12-22T03:46:01.191268",
+        "server_config": {
+            "threads": 8
+        }
+    },
+    "results": [
+        {
+            "task": "load_graph",
+            "config": {
+                "name": "load_graph",
+                "description": "Initial data load"
+            },
+            "status": "success",
+            "metrics": null
+        },
+        {
+            "task": "read_nbrs_latency",
+            "config": {
+                "name": "read_nbrs_latency",
+                "ops": 10000,
+                "description": "Latency test for neighbor traversal"
+            },
+            "status": "success",
+            "metrics": {
+                "metric_type": "latency",
+                "avg_latency_ms": 3.5700827836990356,
+                "p99_latency_ms": 7.406306266784668,
+                "total_ops": 10000
+            }
+        },
+        {
+            "task": "read_nbrs_throughput",
+            "config": {
+                "name": "read_nbrs_throughput",
+                "ops": 10000,
+                "client_threads": 8,
+                "description": "Throughput test for neighbor traversal"
+            },
+            "status": "success",
+            "metrics": {
+                "metric_type": "throughput",
+                "ops_per_sec": 339.6049904550709,
+                "duration_s": 29.445974826812744,
+                "total_ops": 10000
+            }
+        },
+        {
+            "task": "mixed_workload_throughput",
+            "config": {
+                "name": "mixed_workload_throughput",
+                "ops": 50000,
+                "client_threads": 8,
+                "ratios": {
+                    "read_nbrs": 0.5,
+                    "add_edges": 0.5
+                }
+            },
+            "status": "success",
+            "metrics": {
+                "metric_type": "throughput",
+                "ops_per_sec": 372.43388366304623,
+                "duration_s": 134.25201678276062,
+                "total_ops": 50000
+            }
+        }
+    ]
+}

@@ -21,5 +21,11 @@
     "port": 2424,
     "env": { "ORIENTDB_ROOT_PASSWORD": "password" },
     "command": ["/orientdb/bin/server.sh"]
+  },
+  "aster": {
+    "image": "ignored_local_build",
+    "port": 8182,
+    "env": {},
+    "command": []
   }
 }

@@ -1,0 +1,26 @@
+{
+  "server_config": {
+    "threads": 1
+  },
+  "tasks": [
+    {
+      "name": "load_graph",
+      "description": "Initial data load"
+    },
+    {
+      "name": "add_nodes_latency",
+      "ops": 2000,
+      "description": "Latency test for node addition"
+    },
+    {
+      "name": "add_edges_latency",
+      "ops": 2000,
+      "description": "Latency test for edge addition"
+    },
+    {
+      "name": "read_nbrs_latency",
+      "ops": 2000,
+      "description": "Latency test for neighbor traversal"
+    }
+  ]
+}

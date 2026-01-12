@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Use newer Python for Neo4j
-FROM python:3.11-slim
+# Use the specific AsterDB image version
+FROM buchuitoudegou/asterdb:v1.0
 
-WORKDIR /app
+WORKDIR /root/AsterDB
 
-RUN apt-get update && apt-get install -y \
-    git \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+RUN sed -i 's/host: localhost/host: 0.0.0.0/g' conf/gremlin-server.yaml || echo "Config file not found or sed failed"
 
-# Install Neo4j Driver (Latest/HEAD works fine on Python 3.11)
-RUN git clone https://github.com/neo4j/neo4j-python-driver.git /tmp/neo4j-driver \
-    && cd /tmp/neo4j-driver \
-    && pip install .
+# Expose the standard Gremlin Server port
+# Note: Ensure this matches the port defined in your db_config.json
+EXPOSE 8182
 
-RUN pip install --no-cache-dir pandas numpy
-
-CMD ["tail", "-f", "/dev/null"]
+CMD ["./bin/gremlin-server.sh", "conf/gremlin-server.yaml"]

@@ -25,11 +25,15 @@ The project uses a dedicated `docker/` directory to manage build contexts for di
 │   ├── docker.client.arrangodb    # Client image (Python 3.11 + Driver)
 │   ├── docker.db.orientdb         # Server image definition for OrientDB
 │   └── docker.client.orientdb     # Client image (Python 3.9 + Legacy Driver)
-├── impl/                          # Python Driver Implementations
+├── e2d-impl/                      # Python Driver Implementations for end-to-end benchmarks
 │   ├── base.py
 │   ├── neo4j_impl.py
 │   ├── arangodb_impl.py
 │   └── orientdb_impl.py
+├── workloads/                    # Workload configuration files
+│   ├── simple_workload_config.json
+│   ├── workload_config.json
+│   └── mixed_workload_config.json
 ├── run.py                         # Main Host Orchestrator
 ├── docker_runner.py               # Internal Runner (executes inside container)
 ├── db_config.json                 # Port and Environment Variable config
@@ -81,7 +85,7 @@ sudo python3 run.py \
   --dataset-dir ./graph-dataset/coAuthorsDBLP/ \
   --dataset-filename coAuthorsDBLP.mtx \
   --db-config db_config.json \
-  --workload-config workload_config.json \
+  --workload-config ./workloads/simple_workload_config.json \
   --result-dir ./reports
 ```
 
@@ -99,19 +103,21 @@ sudo python3 run.py \
 ### Supported Tasks
 
 *   `load_graph`: Bulk loads the CSV data.
-*   `read_nbrs_bench`: Benchmarks 1-hop neighbor traversal.
-*   `add_nodes_bench` / `delete_nodes_bench`: Node modification throughput.
-*   `add_edges_bench` / `delete_edges_bench`: Edge modification throughput.
+*   `read_nbrs_latency` / `read_nbrs_throughput`: Benchmarks 1-hop neighbor traversal.
+*   `add_nodes_latency` / `add_nodes_throughput` / `delete_nodes_latency` / `delete_nodes_throughput`: Node modification throughput.
+*   `add_edges_bench` / `add_edges_bench` / `delete_edges_bench`: Edge modification throughput.
 *   `mixed_workload_bench`: Runs a probabilistic mixed read/write workload.
 
 ## ⚙️ Configuration
 
 ### Dockerfiles
+
 To change the database version or Python driver version, modify the specific file in the `docker/` directory.
 *   **Example**: To upgrade Neo4j, edit `docker/docker.db.neo4j`.
 *   **Example**: To change the python driver version, edit `docker/docker.client.neo4j`.
 
 ### Database Configuration (`db_config.json`)
+
 This file controls the ports, environment variables (passwords), and default commands.
 
 ```json
@@ -121,6 +127,12 @@ This file controls the ports, environment variables (passwords), and default com
     "env": {
       "NEO4J_AUTH": "neo4j/password",
       "NEO4J_server_memory_heap_initial__size": "1G"
+    }
+  },
+  "arangodb": {
+    "port": 8529,
+    "env": {
+      "ARANGO_ROOT_PASSWORD": "password"
     }
   },
   ...

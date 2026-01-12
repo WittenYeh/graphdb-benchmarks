@@ -8,7 +8,8 @@ import time
 import statistics
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Tuple
-from .base import BaseGraphDB
+
+from e2e_impl.base import BaseGraphDB
 
 class ArangodbDB(BaseGraphDB):
     def connect(self) -> None:
@@ -23,7 +24,7 @@ class ArangodbDB(BaseGraphDB):
     def close(self) -> None: pass
 
     def load_graph(self, graph_file: str) -> None:
-        clean_file = self.preprocess_dataset(graph_file)
+        clean_file = self.clean_dataset(graph_file)
 
         BATCH_SIZE = 20000
 

@@ -12,21 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Use newer Python for Neo4j
+# Use Python 3.11 to maintain consistency with other clients
 FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Neo4j Driver (Latest/HEAD works fine on Python 3.11)
-RUN git clone https://github.com/neo4j/neo4j-python-driver.git /tmp/neo4j-driver \
-    && cd /tmp/neo4j-driver \
-    && pip install .
+# Install Gremlin Python Driver (Required for AsterDB/Gremlin)
+# This includes asyncio and aiohttp which are needed for WebSocket connections
+RUN pip install --no-cache-dir gremlinpython pandas numpy
 
-RUN pip install --no-cache-dir pandas numpy
-
+# Keep container running to allow orchestrator to exec commands
 CMD ["tail", "-f", "/dev/null"]

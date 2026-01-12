@@ -13,7 +13,7 @@ class BaseGraphDB(ABC):
         self.password = password
         self.total_lines = 0
 
-    def preprocess_dataset(self, original_path: str) -> str:
+    def clean_dataset(self, original_path: str) -> str:
         """
         Reads the raw dataset, strips comments, standardizes delimiter to space.
         """
@@ -41,13 +41,21 @@ class BaseGraphDB(ABC):
         """
         if total == 0: return
 
-        # Print roughly every 5% or every 100k records, whichever is smaller
-        interval = min(total // 20, 100000)
+        # Print roughly every 5% or every 10k records, whichever is smaller
+        interval = min(total // 20, 10000)
 
         if current % interval == 0 or current == total:
             percent = (current / total) * 100
             print(f"[{label}] Progress: {current}/{total} ({percent:.1f}%)")
             sys.stdout.flush()
+
+    @staticmethod
+    def preprocess_dataset(original_path: str) -> bool:
+        """
+        Optional hook for databases that require offline data generation (e.g., CSVs).
+        Returns True if pre-processing occurred.
+        """
+        return False
 
     @abstractmethod
     def connect(self): pass
@@ -57,6 +65,23 @@ class BaseGraphDB(ABC):
 
     @abstractmethod
     def load_graph(self, graph_file: str): pass
+
+    def offline_load_graph(self, graph_file: str) -> list:
+        """
+        Executes offline preparation (e.g., CSV generation).
+        Returns a command list (e.g., neo4j-admin import ...) to be executed by the server,
+        or None if no server-side command is needed.
+
+        This method is called BEFORE db.connect().
+        """
+        return None
+
+    def check_offline_load(self, graph_file: str):
+        """
+        Verifies that the offline load was successful (e.g., check node count, create indexes).
+        Called AFTER db.connect().
+        """
+        pass
 
     @abstractmethod
     def read_nbrs_latency(self, workload): pass

@@ -7,7 +7,7 @@ import statistics
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any
-from .base import BaseGraphDB
+from e2e_impl.base import BaseGraphDB
 
 class OrientdbDB(BaseGraphDB):
     def connect(self) -> None:
@@ -35,7 +35,7 @@ class OrientdbDB(BaseGraphDB):
         return self.thread_local.client
 
     def load_graph(self, graph_file: str) -> None:
-        clean_file = self.preprocess_dataset(graph_file)
+        clean_file = self.clean_dataset(graph_file)
 
         BATCH_SIZE = 500
 

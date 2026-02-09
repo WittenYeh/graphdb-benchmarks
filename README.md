@@ -14,23 +14,26 @@ The framework is designed to measure throughput and latency for various graph wo
 
 ## 📂 Project Structure
 
-The project uses a dedicated `docker/` directory to manage build contexts for different databases.
+The project uses a dedicated `dockerfiles/` directory to manage build contexts for different databases.
 
 ```text
 .
-├── docker/                        # Docker build definitions
-│   ├── docker.db.neo4j            # Server image definition for Neo4j
-│   ├── docker.client.neo4j        # Client image (Python 3.11 + Driver)
-│   ├── docker.db.arrangodb        # Server image definition for ArangoDB
-│   ├── docker.client.arrangodb    # Client image (Python 3.11 + Driver)
-│   ├── docker.db.orientdb         # Server image definition for OrientDB
-│   └── docker.client.orientdb     # Client image (Python 3.9 + Legacy Driver)
-├── e2d-impl/                      # Python Driver Implementations for end-to-end benchmarks
+├── dockerfiles/                   # Docker build definitions
+│   ├── dockerfile.db.neo4j        # Server image definition for Neo4j
+│   ├── dockerfile.client.neo4j    # Client image (Python 3.11 + Driver)
+│   ├── dockerfile.db.arangodb     # Server image definition for ArangoDB
+│   ├── dockerfile.client.arangodb # Client image (Python 3.11 + Driver)
+│   ├── dockerfile.db.orientdb     # Server image definition for OrientDB
+│   ├── dockerfile.client.orientdb # Client image (Python 3.9 + Legacy Driver)
+│   ├── dockerfile.db.aster        # Server image definition for AsterDB
+│   └── dockerfile.client.aster    # Client image (Python 3.11 + Gremlin Driver)
+├── e2e_impl/                      # Python Driver Implementations for end-to-end benchmarks
 │   ├── base.py
 │   ├── neo4j_impl.py
 │   ├── arangodb_impl.py
-│   └── orientdb_impl.py
-├── workloads/                    # Workload configuration files
+│   ├── orientdb_impl.py
+│   └── aster_impl.py
+├── workloads/                     # Workload configuration files
 │   ├── simple_workload_config.json
 │   ├── workload_config.json
 │   └── mixed_workload_config.json
@@ -46,7 +49,7 @@ The benchmark operates in a fully automated 5-step pipeline orchestrated by `run
 
 1.  **Image Build Phase**:
     *   The script detects the target DB (e.g., `--db neo4j`).
-    *   It locates the corresponding Dockerfiles in `docker/` (e.g., `docker.db.neo4j` and `docker.client.neo4j`).
+    *   It locates the corresponding Dockerfiles in `dockerfiles/` (e.g., `dockerfile.db.neo4j` and `dockerfile.client.neo4j`).
     *   It builds these images locally, ensuring the correct Python version and driver dependencies are installed.
 2.  **Server Provisioning**: Starts the Database Container with specific resource limits and thread configurations.
 3.  **Sidecar Attachment**: Starts the Client Container sharing the **same network namespace** as the database container.
@@ -87,18 +90,53 @@ sudo python3 run.py \
   --db-config db_config.json \
   --workload-config ./workloads/simple_workload_config.json \
   --result-dir ./reports
+# to test aster
+sudo python3 run.py \
+  --db aster \
+  --dataset-dir ./graph-dataset/coAuthorsDBLP/ \
+  --dataset-filename coAuthorsDBLP.mtx \
+  --db-config db_config.json \
+  --workload-config ./workloads/simple_workload_config.json \
+  --result-dir ./reports
 ```
 
 ### Command Line Arguments
 
 | Argument | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `--db` | Yes | - | Target database. Choices: `neo4j`, `arangodb`, `orientdb`. |
+| `--db` | Yes | - | Target database. Choices: `neo4j`, `arangodb`, `orientdb`, `aster`. |
 | `--dataset-dir` | Yes | - | Absolute or relative path to the directory containing dataset files on the Host. |
 | `--dataset-filename` | Yes | - | The specific filename (e.g., `data.csv`) inside `dataset-dir`. |
 | `--result-dir` | No | `./results` | Host directory where the JSON performance report will be saved. |
 | `--db-config` | No | `db_config.json` | Path to the config file defining ports and ENV vars. |
 | `--workload-config`| No | `workload_config.json` | Path to the config file defining workload details. |
+| `--use-cache` | No | `False` | Use cached Docker base images instead of pulling latest versions. |
+
+### Docker Image Caching
+
+By default, the benchmark **always pulls the latest base images** (e.g., `weitangye/aster-server:latest`) from Docker registry before building, ensuring you're testing with the most up-to-date database versions.
+
+**To use cached images** (skip pulling latest base images):
+```bash
+sudo python3 run.py \
+  --db aster \
+  --dataset-dir ./graph-dataset/coAuthorsDBLP/ \
+  --dataset-filename coAuthorsDBLP.mtx \
+  --db-config db_config.json \
+  --workload-config ./workloads/simple_workload_config.json \
+  --result-dir ./reports \
+  --use-cache
+```
+
+**When to use `--use-cache`:**
+- You want faster builds and don't need the latest base image
+- You're running multiple benchmarks in quick succession
+- You're working offline or have limited bandwidth
+
+**When NOT to use `--use-cache`:**
+- You've updated the `FROM` line in a Dockerfile
+- You want to test against the latest database version
+- You're doing a fresh benchmark run for publication
 
 ### Supported Tasks
 
@@ -112,9 +150,9 @@ sudo python3 run.py \
 
 ### Dockerfiles
 
-To change the database version or Python driver version, modify the specific file in the `docker/` directory.
-*   **Example**: To upgrade Neo4j, edit `docker/docker.db.neo4j`.
-*   **Example**: To change the python driver version, edit `docker/docker.client.neo4j`.
+To change the database version or Python driver version, modify the specific file in the `dockerfiles/` directory.
+*   **Example**: To upgrade Neo4j, edit `dockerfiles/dockerfile.db.neo4j`.
+*   **Example**: To change the python driver version, edit `dockerfiles/dockerfile.client.neo4j`.
 
 ### Database Configuration (`db_config.json`)
 

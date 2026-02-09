@@ -13,11 +13,18 @@
 # limitations under the License.
 
 # Use the specific AsterDB image version
-FROM buchuitoudegou/asterdb:v1.0
+FROM weitangye/aster-server:latest
 
-WORKDIR /root/AsterDB
+WORKDIR /root/AsterDB/gremlin-server/target/apache-tinkerpop-gremlin-server-4.0.0-SNAPSHOT-standalone
 
-RUN sed -i 's/host: localhost/host: 0.0.0.0/g' conf/gremlin-server.yaml || echo "Config file not found or sed failed"
+# Create TinkerGraph configuration with AsterDB's updatePolicy
+RUN echo "gremlin.graph=org.apache.tinkerpop.gremlin.tinkergraph.structure.TinkerGraph" > conf/tinkergraph-aster.properties && \
+    echo "gremlin.tinkergraph.graphLocation=" >> conf/tinkergraph-aster.properties && \
+    echo "gremlin.tinkergraph.graphFormat=gryo" >> conf/tinkergraph-aster.properties && \
+    echo "updatePolicy=2" >> conf/tinkergraph-aster.properties
+
+# Copy our clean configuration file that doesn't have problematic init scripts
+COPY dockerfiles/gremlin-server-minimal.yaml conf/gremlin-server.yaml
 
 # Expose the standard Gremlin Server port
 # Note: Ensure this matches the port defined in your db_config.json

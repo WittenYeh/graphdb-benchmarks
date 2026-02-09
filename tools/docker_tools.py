@@ -17,21 +17,28 @@ import sys
 import docker
 
 
-def build_image(client, dockerfile_path, tag_name):
+def build_image(client, dockerfile_path, tag_name, pull=True):
     """
     Builds a docker image from a specific Dockerfile.
+    The image is always built and tagged with the specified name (overwriting if exists).
+
+    Args:
+        pull: If True, pulls the latest base image from registry before building.
+              If False, uses cached base image if available.
     """
     if not os.path.exists(dockerfile_path):
         print(f"Error: Dockerfile not found at {dockerfile_path}")
         sys.exit(1)
 
-    print(f"--- Building Image: {tag_name} from {dockerfile_path} ---")
+    pull_msg = " (pulling latest base image)" if pull else " (using cached base image)"
+    print(f"--- Building Image: {tag_name} from {dockerfile_path}{pull_msg} ---")
     try:
         img, logs = client.images.build(
             path=".",
             dockerfile=dockerfile_path,
             tag=tag_name,
-            rm=True
+            rm=True,
+            pull=pull
         )
         return img
     except docker.errors.BuildError as e:

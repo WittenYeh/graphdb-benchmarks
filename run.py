@@ -33,16 +33,16 @@ def run_benchmark(args):
     # Define Image Tags & Paths
     server_img_tag = f"bench-server-{db_name}:latest"
     client_img_tag = f"bench-client-{db_name}:latest"
-    server_dockerfile = f"docker/dockerfile.db.{db_name}"
-    client_dockerfile = f"docker/dockerfile.client.{db_name}"
+    server_dockerfile = f"dockerfiles/dockerfile.db.{db_name}"
+    client_dockerfile = f"dockerfiles/dockerfile.client.{db_name}"
 
     # Pre-flight cleanup
     force_remove_container(client_docker, f"bench-target-{db_name}")
     force_remove_container(client_docker, f"bench-client-{db_name}")
 
     # Build
-    build_image(client_docker, server_dockerfile, server_img_tag)
-    build_image(client_docker, client_dockerfile, client_img_tag)
+    build_image(client_docker, server_dockerfile, server_img_tag, pull=not args.use_cache)
+    build_image(client_docker, client_dockerfile, client_img_tag, pull=not args.use_cache)
 
     # Directories
     host_result_dir = os.path.abspath(args.result_dir)
@@ -178,5 +178,7 @@ if __name__ == "__main__":
     parser.add_argument("--db-config", default="db_config.json")
     parser.add_argument("--workload-config", default="workload_config.json")
     parser.add_argument("--result-dir", type=str, default="./results")
+    parser.add_argument("--use-cache", action="store_true",
+                        help="Use existing Docker images without pulling latest base images")
     args = parser.parse_args()
     run_benchmark(args)
